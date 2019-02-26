@@ -36,7 +36,7 @@ library(geosphere)
 library(sp)
 #library(doMC)
 #registerDoMC(2)
-library(plm)
+library(lfe)
 ```
 
 ```{r cars}
@@ -77,8 +77,8 @@ f+geom_col()
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
 
-## The regression analysis
-### Utilization of latitude and longitude data
+## 4.The regression analysis
+### 4.1 Utilization of latitude and longitude data
 **Use of the location data**
 - Firstly, we use google map to get the main shopping mall center, since shopping malls represents the population flow and the convenience of life.
 - Then, convert the data from KML to json and use python to parse it.
@@ -90,6 +90,7 @@ business_center =data.frame(business_center)
 ```
 **Classification into the shopping mall district.**
 - firstly, let us get some sense of how far those shopping mall is between each other, so we could decide how much we should set on the distance variable later on we use in classification.
+- But this function is not used later.
 ```{r Classification}
 # calculate the distance matrix use the geosphere package
 get_geo_distance = function(long1, lat1, long2, lat2, units = "miles") {
@@ -113,7 +114,7 @@ get_geo_distance = function(long1, lat1, long2, lat2, units = "miles") {
 }
 ```
 
-
+-Then we use the sq module to calculate the minimum distance and the one shopping center which is closest.The shopping center is indexed by numbers but here I did not retrive it back to the names of them because I did not quite used to use R to do it. I may do it using Python afterwards.
 ```{r}
 bizcenter = colsplit(business_center$business_center, ",", names = c("Lng", "Lat"))
 df_nNA_new = df_nNA
@@ -136,7 +137,7 @@ rm(closestSiteVec)
 df_nNA$closest_dis = minDistVec
 rm(minDistVec)
 ```
-## Consider how to use the location information.
+### 4.1.2 Consider how to interpret the location information.
 - first, we could see which location is the one with the most residents houses.
 - second, we could use the group in which they are in to use as a control variable. (FE)
 ```{r}
@@ -148,11 +149,118 @@ g + geom_point(aes(colour=factor(df_nNA$bathRoom)))
 - and the room type structure across the business center cycle is the same as well.
 - So later on we could perform a FE estimation.
 - Since this does not asked about the prediction, I use PLM package directly to regress without split it into train set and test set.
+--- 
+- before that, we need to further convert some variable
+```{r}
+df_nNA$livingRoom <- as.numeric(df_nNA$livingRoom)
+df_nNA$bathRoom <- as.numeric(df_nNA$bathRoom)
+df_nNA$drawingRoom <- as.numeric(df_nNA$drawingRoom)
+df_nNA$district <- as.factor(df_nNA$district)
+#------------
+makeBuildingType <- function(x){
+  if(!is.na(x)){
+    if(x==1){
+      return('Tower')
+      }
+      else if (x==2){
+        return('Bungalow')
+      }
+      else if (x==3){
+        return('Mix_plate_tower')
+      }
+      else if (x==4){
+        return('plate')
+      }
+  else return('wrong_coded')
+  }
+  else{return('missing')}
+}
+df_nNA$buildingType <- sapply(df_nNA$buildingType, makeBuildingType)
+
+df_nNA <- data.frame(df_nNA %>% filter(buildingType != 'wrong_coded' & buildingType !='missing'))
+
+makeRenovationCondition <- function(x){
+    if(x==1){
+        return('Other')
+    }
+    else if (x==2){
+        return('Rough')
+    }
+    else if (x==3){
+        return('Simplicity')
+    }
+    else if (x==4){
+        return('Hardcover')
+    }
+}
+df_nNA$renovationCondition <- sapply(df_nNA$renovationCondition, makeRenovationCondition)
+
+makeBuildingStructure <- function(x){
+    if(x==1){
+        return('Unknown')
+    }
+    else if (x==2){
+        return('Mix')
+    }
+    else if (x==3){
+        return('Brick_Wood')
+    }
+    else if (x==4){
+        return('Brick_Concrete')
+    }
+    else if (x==5){
+        return('Steel')
+    }
+    else if (x==6){
+        return('Steel_Concrete')
+    }
+}
+df_nNA$buildingStructure <- sapply(df_nNA$buildingStructure, makeBuildingStructure)
+df_nNA$elevator <- ifelse(df_nNA$elevator==1,'has_elevator','no_elevator')
+df_nNA$constructionTime <-as.numeric(df_nNA$constructionTime)
+df_nNA$district <-as.factor(df_nNA$district)
+df_nNA$subway <- ifelse(df_nNA$subway==1,'has_subway','no_subway')
+
+df_nNA$fiveYearsProperty <- ifelse(df_nNA$fiveYearsProperty==1,'owner_less_5y','owner_more_5y')
+
+#head(df2)
+```
+```{r}
+# plot of missing data
+df_nNA %>% is.na %>% melt %>% 
+  ggplot(data = .,aes(x = Var2, y = Var1)) + geom_tile(aes(fill = value,width=0.95)) +
+  scale_fill_manual(values = c("grey20","white")) + theme_minimal(14) + 
+  theme(axis.text.x  = element_text(angle=45, vjust=.75), 
+        legend.position='None',
+        legend.direction='horizontal',
+        panel.grid.major=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        plot.margin=unit(c(.1,.1,.1,.1), "cm")) + 
+  labs(title = 'Missing values in each columns', subtitle='represented as white bars')
+df_nNA <- data.frame(df_nNA %>% na.omit())
+
+```
+## 4.2 FE regression
+### 4.2.1 Performing the reg
+**Finally, we use lfe library to do regression, since the matrix is so big i have tried so many ways, finally i found this library, but the formula used in the felm function is kind of redundent, I would appreciate if anyone would indicate a better way to do it.**
 ```{r}
 df_nNA$closest_site = factor(df_nNA$closest_site)
 df_nNA$tradeTime = factor(df_nNA$tradeTime)
-res_fe = lm(price ~ . -tradeTime -df_nNA$closest_site + factor(closest_site) + factor(tradeTime), data = df_nNA)
-summary(res_fe)
+res = felm(price~	DOM+followers+square+livingRoom+drawingRoom+kitchen+bathRoom+buildingType+constructionTime+	renovationCondition+buildingStructure+ladderRatio+elevator+fiveYearsProperty+subway+district+communityAverage+closest_dis|closest_site+tradeTime, data= df_nNA, exactDOF = 152236)
+summary(res)
 
 ```
+### 4.2.2 interpretation of the regression results 
+Here the FE estimates shows that 
+- the bigger house is, the harder to sell at high price, i guess it's because people are credit constrained.
+- the structure of the rooms (whether having living rooms, bathrooms and drawing rooms) would impact the price.
+- construction time shows that the newer the better.
+- and most importantly, the closer your house to the closest shopping mall, the higher price you would have. This is consistent with the intuition.
 
+## 5. Further Projects or to dos.
+### 5.1 To use structure model (BLP demand estimation and cost of house estimation.)
+I would like to incorporate the DOM variable into the structure model, the intuition are listed as follows. 
+And since the house is expensive, the probability for you to choose the house the time you saw them is very rare. You usually wouold ponder for a long time for it. But this information reflected by DOM would affect the interpretation of the final model. Imagine a case that there is a house with high quality and reasonable price, but the information about its quality is needed to be verified, thus need time, if you price it even lower than the other similar houses' price, the buyer would doubt more so as to invest more time into the house. If the houses supply is limited, and the DOM is short, then it would imply that this kind of house with the listed price would have more probability to be bought buy agent than its realized market share. So this variable is very informative to be modeled. A model processing information like rational inattention (Matejka and Mckay, 2018) may be helpful.
+Beside,the decision of outside good is hard here. Unlike cereals or yogurts or even cars (in US it's relatively cheap), the house in Beijing is so expensive even looking back into 2000's. So if you are one of the followers in the platform, I assume you are very likely to have enough money to enter this market (i.e. you have be able to purchase some house in the market.) So these followers would indicates us some information to infer the potential buyers. Then combining with the total transaction data and the portion of the transaction from Lianjia, we could infer the total market size. The outside choice then could be defined and computed.
+And then the following up procedures is standard using BLP. If land transaction data is acquired, the cost function is also estimatable.
