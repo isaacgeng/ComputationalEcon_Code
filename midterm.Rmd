@@ -1,0 +1,158 @@
+---
+title: "Midterm-HW"
+author: "Hao GENG"
+date: "2019骞<b4>2鏈<88>24鏃<a5>"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+#load packages and csv file
+library(knitr)
+library(ggplot2)
+library(dplyr)
+library(RColorBrewer)
+#library(rworldmap)
+#library(ggthemes)
+#library(rgdal)
+#library(corrplot)
+#library(ggfortify)
+library(reshape2)
+#library(gridExtra)
+#library(lubridate)
+#library(caret)
+#library(psych)
+library(geosphere)
+library(sp)
+#library(doMC)
+#registerDoMC(2)
+library(plm)
+```
+
+```{r cars}
+setwd("C:/Users/耿浩/Documents/Computational_Midterm")
+df = read.csv("new.csv",header = TRUE,sep = ",",stringsAsFactors = F,fileEncoding = "GBK")
+
+
+```
+- The floor variable means high/middle/low among the total # of the building
+- so we need to split the variable into two.
+```{r cars}
+df$NFloor <- as.numeric(sapply(df$floor, function(x) strsplit(x,' ')[[1]][2]))
+df$vert_loca<- sapply(df$floor, function(x) strsplit(x,' ')[[1]][1])
+
+```
+## Drop NAs
+```{r cars}
+row.has.na <- apply(df, 1, function(x){any(is.na(x))})
+sum(row.has.na)
+df_nNA <- df[!row.has.na,]
+```
+## Inspect the nature of variable
+```{r cars}
+str(df)
+# new_summary = apply(df,2,function(x){summary(x) {if (class(x)=="number"|"interger")}})
+
+```
+## Including Plots
+
+
+
+```{r pressure, echo=FALSE}
+df_plot = aggregate(df["price"],list(df$tradeTime),mean)
+f = ggplot(data=df_plot,aes(df_plot$Group.1,df_plot$price))
+f+geom_col()
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## The regression analysis
+### Utilization of latitude and longitude data
+**Use of the location data**
+- Firstly, we use google map to get the main shopping mall center, since shopping malls represents the population flow and the convenience of life.
+- Then, convert the data from KML to json and use python to parse it.
+- The final data are listed here.
+```{r}
+business_center = rbind('116.415424,39.909242', '116.459284,39.909456', '116.451473,39.916122', '116.479368,39.909111', '116.483831,39.910658', '116.429801,39.907341', '116.422033,39.915168', '116.374987,39.897448', '116.373432,39.910806', '116.361576,39.917217', '116.357875,39.907564', '116.289296,39.957698', '116.315861,39.978222', '116.454949,39.934388', '116.462932,39.948931', '116.474047,39.949753', '116.436002,39.939768', '116.353326,39.940903', '116.421862,39.89828', '116.504731,40.034154', '116.421132,39.885603', '116.457825,39.875394', '116.449199,39.90921', '116.445487,39.913456', '116.453018,39.934059', '116.535587,39.902494', '116.403408,39.936296', '116.394728,39.93906', '116.340784,39.93753', '116.355472,39.977054', '116.38607,39.895267', '116.395404,39.895835', '116.375116,39.907551', '116.294725,40.095309', '116.398473,39.86067', '116.436281,39.971233', '116.411519,39.913727', '116.186986,39.762466', '116.410253,39.913621', '116.32086,39.970543', '116.295605,39.97327', '116.344357,39.966612', '116.296399,39.908024', '116.366973,39.854444', '116.305175,39.908057', '116.547432,40.066971', '116.373539,39.909456', '116.32343,39.965465', '116.523324,39.940541', '116.490784,39.969983', '116.239235,40.212195', '116.518164,39.923824', '116.405758,39.990849', '116.418074,39.89902', '116.406605,39.994219', '116.458962,39.907251', '116.44892,39.919134', '116.431925,39.940409', '116.227777,39.906592', '116.449714,39.934256', '116.596527,40.009735', '116.338938,39.992361', '116.439242,39.921635', '116.460743,39.89395', '116.488295,39.877337', '116.312658,39.981177', '116.375835,39.909325', '116.285799,39.838628')
+business_center =data.frame(business_center) 
+
+```
+**Classification into the shopping mall district.**
+- firstly, let us get some sense of how far those shopping mall is between each other, so we could decide how much we should set on the distance variable later on we use in classification.
+```{r Classification}
+# calculate the distance matrix use the geosphere package
+get_geo_distance = function(long1, lat1, long2, lat2, units = "miles") {
+  loadNamespace("purrr")
+  loadNamespace("geosphere")
+  longlat1 = purrr::map2(long1, lat1, function(x,y) c(x,y))
+  longlat2 = purrr::map2(long2, lat2, function(x,y) c(x,y))
+  distance_list = purrr::map2(longlat1, longlat2, function(x,y) geosphere::distHaversine(x, y))
+  distance_m = list_extract(distance_list, position = 1)
+  if (units == "km") {
+    distance = distance_m / 1000.0;
+  }
+  else if (units == "miles") {
+    distance = distance_m / 1609.344
+  }
+  else {
+    distance = distance_m
+    # This will return in meter as same way as distHaversine function. 
+  }
+  distance
+}
+```
+
+
+```{r}
+bizcenter = colsplit(business_center$business_center, ",", names = c("Lng", "Lat"))
+df_nNA_new = df_nNA
+
+coordinates(df_nNA_new) <- c("Lng", "Lat")
+coordinates(bizcenter) <- c("Lng", "Lat")
+# create the two vectors for loop use
+closestSiteVec <- vector(mode = "numeric",length = nrow(df_nNA))
+minDistVec     <- vector(mode = "numeric",length = nrow(df_nNA))
+
+for (i in 1 : nrow(df_nNA_new))
+  {
+    distVec <- spDistsN1(bizcenter,df_nNA_new[i,],longlat = TRUE)
+    minDistVec[i] <- min(distVec)
+    closestSiteVec[i] <- which.min(distVec)
+  }
+
+df_nNA$closest_site = closestSiteVec
+rm(closestSiteVec)
+df_nNA$closest_dis = minDistVec
+rm(minDistVec)
+```
+## Consider how to use the location information.
+- first, we could see which location is the one with the most residents houses.
+- second, we could use the group in which they are in to use as a control variable. (FE)
+```{r}
+g = ggplot(data=df_nNA,aes(df_nNA$closest_site,price))
+g + geom_point(aes(colour=factor(df_nNA$bathRoom)))
+```
+
+- so this indicates that the price pattern is relative stable across the business cycle.
+- and the room type structure across the business center cycle is the same as well.
+- So later on we could perform a FE estimation.
+- Since this does not asked about the prediction, I use PLM package directly to regress without split it into train set and test set.
+```{r}
+df_nNA$closest_site = factor(df_nNA$closest_site)
+df_nNA$tradeTime = factor(df_nNA$tradeTime)
+res_fe = lm(price ~ . -tradeTime -df_nNA$closest_site + factor(closest_site) + factor(tradeTime), data = df_nNA)
+summary(res_fe)
+
+```
+
